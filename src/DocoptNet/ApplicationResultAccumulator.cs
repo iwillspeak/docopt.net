@@ -2,7 +2,11 @@
 
 namespace DocoptNet
 {
+    using System;
     using System.Collections.Generic;
+    using System.Linq;
+    using System.Reflection;
+    using System.Text;
 
     interface IApplicationResultAccumulator<T>
     {
@@ -24,6 +28,12 @@ namespace DocoptNet
     {
         public static readonly IApplicationResultAccumulator<IDictionary<string, Value>> ValueDictionary = new ValueDictionaryAccumulator();
         public static readonly IApplicationResultAccumulator<IDictionary<string, ValueObject>> ValueObjectDictionary = new ValueObjectDictionaryAccumulator();
+
+        public static IApplicationResultAccumulator<T> ForType<T>()
+            where T: new()
+        {
+            return new TypedArgumentsAccumulator<T>();
+        }
 
         sealed class ValueDictionaryAccumulator : IApplicationResultAccumulator<IDictionary<string, Value>>
         {
@@ -67,6 +77,69 @@ namespace DocoptNet
                 dict[name] = new ValueObject(value);
                 return dict;
             }
+        }
+
+        sealed class TypedArgumentsAccumulator<T> : IApplicationResultAccumulator<T>
+            where T: new()
+        {
+            public T New() => new T();
+            public T Command(T state, string name, bool value) => Adding(state, name, value);
+            public T Command(T state, string name, int value) => Adding(state, name, value);
+            public T Argument(T state, string name) => Adding(state, name, null);
+            public T Argument(T state, string name, string value) => Adding(state, name, value);
+            public T Argument(T state, string name, StringList value) => Adding(state, name, value);
+            public T Option(T state, string name) => Adding(state, name, null);
+            public T Option(T state, string name, bool value) => Adding(state, name, value);
+            public T Option(T state, string name, string value) => Adding(state, name, value);
+            public T Option(T state, string name, int value) => Adding(state, name, value);
+            public T Option(T state, string name, StringList value) => Adding(state, name, value);
+            public T Error(DocoptBaseException exception) => default!;
+
+            static T Adding(T args, string name, object? value)
+            {
+                var propertyName = GetPropertyName(name);
+                if (!s_Properties.TryGetValue(propertyName, out var prop))
+                {
+                    throw new ArgumentException($"Can't find property ${propertyName} for argument {name}", nameof(name));
+                }
+                prop.SetValue(args, value);
+                return args;
+            }
+
+            private static string GetPropertyName(string name)
+            {
+                if (name.StartsWith("--"))
+                {
+                    return $"Flag{Pascalise(name.Substring(2))}";
+                }
+                if (name.StartsWith("<") && name.EndsWith(">"))
+                {
+                    return $"Arg{Pascalise(name.Substring(1, name.Length - 2))}";
+                }
+                return Pascalise(name);
+            }
+
+            private static string Pascalise(string kebabString)
+            {
+                var pascalBuilder = new StringBuilder();
+                var boundary = true;
+                foreach (var c in kebabString)
+                {
+                    if (c == '-')
+                    {
+                        boundary = true;
+                    }
+                    else
+                    {
+                        pascalBuilder.Append(boundary ? char.ToUpper(c) : c);
+                        boundary = false;
+                    }
+                }
+                return pascalBuilder.ToString();
+            }
+
+            private static IDictionary<string, PropertyInfo> s_Properties =
+                typeof(T).GetTypeInfo().GetProperties().ToDictionary(p => p.Name);
         }
     }
 }
